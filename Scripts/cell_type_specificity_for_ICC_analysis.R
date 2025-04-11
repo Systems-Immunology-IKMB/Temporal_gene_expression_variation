@@ -216,7 +216,7 @@ icc_specificity$is_marker <- ifelse(icc_specificity$Gene_ID %in% df_marker$Gene_
 
 
 
-# Code for mosaic plot as in Fig. 2h ---------------
+# Code for mosaic plot as in Fig. 2e ---------------
 
 mosaic_plot <- ggplot(icc_specificity) + 
   geom_mosaic(aes(x = ggmosaic::product(Group, is_marker), fill = Group)) +

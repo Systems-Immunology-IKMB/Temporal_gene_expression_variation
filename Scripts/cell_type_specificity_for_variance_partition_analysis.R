@@ -261,7 +261,7 @@ df_enrichment_pval$adj_p <- p.adjust(df_enrichment_pval$p_value, method = "BH")
 
 
 
-## Code for barplot as in Extended Data Fig. 2d ---------------
+## Code for barplot as in Extended Data Fig. 2e ---------------
 
 df_enrichment$Cell_type <- factor(df_enrichment$Cell_type, levels = c("Neutrophils", "Monocytes", "Lymphocytes", "Eosinophils"))
 df_enrichment$Variance <- factor(df_enrichment$Variance, levels = c("low variance", "high variance"))

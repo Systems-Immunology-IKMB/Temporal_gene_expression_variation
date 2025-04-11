@@ -116,7 +116,7 @@ write.table(gene_icc_data, "results/ICC_sex_differences/output/ICC_results_femal
 
 
 
-### ICC density plot as in Fig. 2e -----------------
+### ICC density plot as in Fig. 2f -----------------
 
 gene_icc_data_males <- read.table("results/ICC_sex_differences/output/ICC_results_males_ageAdj.txt", sep = '\t', header = TRUE)
 gene_icc_data_females <- read.table("results/ICC_sex_differences/output/ICC_results_females_ageAdj.txt", sep = '\t', header = TRUE)
@@ -167,7 +167,7 @@ density_plot_sex <- ggplot(gene_icc_data_sex, aes(x = ICC, col = Sex)) +
 
 
 
-### ICC boxplots as in Fig. 2f -----------------
+### ICC boxplots as in Fig. 2g -----------------
 
 plot_data <- merged_results_ageAdj[, c("gene_name.males", "Category", "Var_within.males", "Var_between.males", "Var_within.females", "Var_between.females")] %>%
   melt(id.vars = c("gene_name.males", "Category")) %>%
@@ -235,14 +235,16 @@ d <- 1
 for(d in 1:length(direction)){
   
   if(direction[d] == "conserved_in_males") {
-    degs <- merged_results_ageAdj %>%
-      subset(.$ICC_diff > 0.2) %>%
-      .[order(.$ICC_diff, decreasing = TRUE), ] %>%
+    degs <- merged_results_LS %>%
+      subset(.$ICC.males - .$ICC.females > 0.2) %>%
+      subset(.$ICC.males > 0.5) %>%
+      subset(.$ICC.females < 0.5) %>%
       .$Gene_ID
   }else if(direction[d] == "conserved_in_females") {
-    degs <- merged_results_ageAdj %>%
-      subset(.$ICC_diff < -0.2) %>%
-      .[order(.$ICC_diff, decreasing = FALSE), ] %>%
+    degs <- merged_results_LS %>%
+      subset(.$ICC.females - .$ICC.males > 0.2) %>%
+      subset(.$ICC.females > 0.5) %>%
+      subset(.$ICC.males < 0.5) %>%
       .$Gene_ID
   }
   
@@ -251,7 +253,8 @@ for(d in 1:length(direction)){
                              overallBaseMean, 
                              selected_database = "org.Hs.eg.db", 
                              back_num = 10,
-                             annotation = annotation)
+                             annotation = annotation, 
+                             same_expression_level = FALSE)
   
   go_results_filtered <- filter_go_results(topGOResults, top_num = 600, onto = "BP")
   
@@ -270,8 +273,8 @@ for(d in 1:length(direction)){
   
 }
 
-my_terms_1 <- GO_tables[[1]][c(4, 5, 6, 7, 8, 12, 14, 16, 20), ]$GO.ID
-my_terms_2 <- GO_tables[[2]][c(3, 7, 10, 14, 15, 20, 21), ]$GO.ID
+my_terms_1 <- GO_tables[[1]][c(1, 2, 3, 4, 5, 11, 13, 14, 18, 20), ]$GO.ID
+my_terms_2 <- GO_tables[[2]][c(1, 2, 3, 6, 7, 8, 9, 11, 13, 14), ]$GO.ID
 my_terms <- c(my_terms_1, my_terms_2)
 
 score_name <- "Fisher.elim"

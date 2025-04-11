@@ -14,6 +14,7 @@ library(ICC)
 library(circlize)
 library(ComplexHeatmap)
 library(rstatix)
+library(ppcor)
 
 setwd("C:/Users/n.mishra/Temporal_gene_expression_variation")
 
@@ -34,12 +35,13 @@ col_clinical_data$Annual_season <- ifelse(col_clinical_data$Month %in% c("Januar
                                                  ifelse(col_clinical_data$Month %in% c("April", "May"), "Spring", "Autumn")))
 
 count_data <- count_data[as.character(gene_list$Gene_ID), as.character(col_clinical_data$Sample_ID)]
-
+colnames(count_data) <- col_clinical_data$Description
 
 
 
 ## Run WGCNA ----------------
 
+#normalize count data
 dds_counts <- DESeqDataSetFromMatrix(countData = count_data, colData = col_clinical_data, design = ~ Individual_ID)
 dds_counts <- estimateSizeFactors(dds_counts)
 vst_counts <- vst(dds_counts)
@@ -58,16 +60,18 @@ dev.off()
 clust <- cutreeStatic(sample_tree, cutHeight = 95, minSize = 10)
 table(clust)
 
+#determine parameters
 powers = c(c(1:10), seq(from = 12, to=20, by=2))
 sft = pickSoftThreshold(vst_counts, powerVector = powers, verbose = 5)
 sizeGrWindow(9,5)
-par(mfrow= c(1,2));
+par(mfrow = c(1,2));
 cex1 = 0.9;
 
-#Scale-free topology fit index as a function of soft-threshold power: Scale Indepence Plot
+#Scale-free topology fit index as a function of soft-threshold power: Scale Independence Plot
 plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], xlab = "Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n", main = paste("Scale independence"));
 text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red");
 abline(h=0.90, cool="red")
+
 #Mean connectivity Plot
 plot(sft$fitIndices[,1], sft$fitIndices[,5], xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n", main = paste("Mean connectivity"))
 text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
@@ -78,14 +82,12 @@ TOM = TOMsimilarity(adj_mat)
 dissTOM = 1-TOM
 TOM_gene_tree <- hclust(as.dist(dissTOM), method = "average")
 
-#Define modules
-module_labels <- cutreeDynamicTree(dendro=TOM_gene_tree, minModuleSize=15, deepSplit=TRUE)
+#Define and merge modules
+module_labels <- cutreeDynamicTree(dendro=TOM_gene_tree, minModuleSize = 15, deepSplit = TRUE)
 module_colors <- labels2colors(module_labels)
+mergedColor <- mergeCloseModules(vst_counts, module_colors, cutHeight = .2)$color
 
-#Merge modules
-mergedColor <- mergeCloseModules(vst_counts,module_colors,cutHeight=.2)$color
-
-#Output gene tree and modules
+#Save co-expression results
 gene_module <- data.frame(Gene = colnames(vst_counts), ModuleLabel = module_labels, ModuleColor = mergedColor)
 write.table(gene_module, "results/Coexpression/output/gene_module.txt", quote = FALSE, sep = '\t', row.names = FALSE)
 
@@ -93,6 +95,46 @@ MEsO <- moduleEigengenes(vst_counts, mergedColor)$eigengenes
 MEs <- orderMEs(MEsO)
 rownames(MEs) <- rownames(vst_counts)
 write.table(MEs, "results/Coexpression/output/module_eigengenes.txt", quote = FALSE, sep = '\t')
+
+module_size <- as.data.frame(table(gene_module$ModuleColor))
+colnames(module_size) <- c("Module_color", "Number_of_genes")
+module_size <- module_size[module_size$Module_color != "grey", ]
+module_size <- module_size[order(module_size$Number_of_genes, decreasing = TRUE), ]
+module_size$Module_name <- paste0("M", 1:nrow(module_size))
+write.table(module_size, "results/Coexpression/output/Module_list.txt", sep = '\t', quote = FALSE)
+
+
+
+
+## Compute partial correlation between module eigengenes and clinical parameters --------------------
+
+#prepare clinical data
+clinical_traits <- col_clinical_data[, c("Neutrophils...µL.", "Lymphocytes...µL.", "Creatinine..mg.dL.", "Annual_season", "Monocytes...µL.", "Hemoglobin..g.dL.", "Age..years.", "Triglycerides..mg.dL.", "Eosinophils...µL.", "Gender", "Thrombocytes..x1000.µL.", "Time_of_sampling", "Albumin..g.L.", "BMI..kg.m2.", "Uric.acid..mg.dL.", "hsCRP..mg.L.")]
+clinical_traits$Gender <- ifelse(clinical_traits$Gender == "Man", 0, 1)
+clinical_traits$Annual_season <- ifelse(clinical_traits$Annual_season == "Summer", -1, ifelse(clinical_traits$Annual_season == "Winter", 1, 0))
+rownames(clinical_traits) <- col_clinical_data$Description
+clinical_traits <- clinical_traits[rownames(vst_counts), ]
+
+#compute spearman partial correlation
+eigengenes <- as.data.frame(MEs)
+filtered_eigengenes <- eigengenes[, !(colnames(eigengenes)=="MEgrey")]
+module_trait_pcor <- pcor(na.omit(cbind(filtered_eigengenes, clinical_traits)), method = "spearman")
+module_trait_pcor_matrix <- module_trait_pcor$estimate[colnames(filtered_eigengenes), colnames(clinical_traits)]
+module_trait_pcor_pvalue <- module_trait_pcor$p.value[colnames(filtered_eigengenes), colnames(clinical_traits)]
+module_trait_pcor_adj_pvalue <- p.adjust(module_trait_pcor_pvalue, method = 'BH')
+module_trait_pcor_adj_pvalue <- matrix(module_trait_pcor_adj_pvalue, nrow = nrow(module_trait_pcor_pvalue), ncol = ncol(module_trait_pcor_pvalue))
+rownames(module_trait_pcor_matrix) <- gsub("ME", "", rownames(module_trait_pcor_matrix))
+rownames(module_trait_pcor_matrix) <- module_size[match(rownames(module_trait_pcor_matrix), module_size$Module_color), "Module_name"]
+colnames(module_trait_pcor_matrix) <- c("Neutrophils", "Lymphocytes", "Creatinine", "Annual Season", "Monocytes", "Hemoglobin", "Age", "Triglycerides", "Eosinophils", "Sex", "Thrombocytes", "Time of sampling", "Albumin", "BMI", "Uric acid", "hsCRP")
+colnames(module_trait_pcor_adj_pvalue) <- colnames(module_trait_pcor_matrix)
+rownames(module_trait_pcor_adj_pvalue) <- rownames(module_trait_pcor_matrix)
+
+module_trait_pcor_matrix <- module_trait_pcor_matrix[as.character(module_size$Module_name), ]
+module_trait_pcor_adj_pvalue <- module_trait_pcor_adj_pvalue[as.character(module_size$Module_name), ]
+
+write.table(module_trait_pcor_matrix, "results/Coexpression/protein_coding_genes/output/module_trait_partial_correlation.txt", sep = '\t', quote = FALSE)
+write.table(module_trait_pcor_pvalue, "results/Coexpression/output/Clinical_traits/module_trait_partial_correlation_pval.txt", sep = '\t', quote = FALSE)
+write.table(module_trait_pcor_adj_pvalue, "results/Coexpression/output/Clinical_traits/module_trait_partial_correlation_adj_pval.txt", sep = '\t', quote = FALSE)
 
 
 
