@@ -264,3 +264,4 @@ get_GO_df <- function(GO_tables, direction, score_name, reverse_bool = FALSE, on
   return(df)
 }
 
+

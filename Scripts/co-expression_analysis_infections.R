@@ -556,7 +556,7 @@ draw(ht_infection_genes,
 
 
 
-### Code for sample overview as in Extended Data Fig. 8e ------------------------------
+### Code for sample overview as in Extended Data Fig. 8f ------------------------------
 
 df_infection <- read.table("results/infections/output/metadata_infections_healthy.txt", sep = "\t", header = TRUE)
 
@@ -636,7 +636,7 @@ plot(samples_A + p_B_and_legend + plot_layout(ncol = 2))
 
 
 
-### Cell count and hsCRP barplots as in Extended Data Fig. 8f ------------------------------
+### Cell count and hsCRP barplots as in Extended Data Fig. 8g ------------------------------
 
 df_infection <- read.table("results/infections/output/metadata_infections_healthy.txt", sep = "\t", header = TRUE) %>%
   subset(.$group != "before")
@@ -662,9 +662,10 @@ df_plot$my_order <- factor(df_plot$group, levels = c("control", "infected", "aft
 df_plot$variable <- factor(df_plot$variable, levels = c("Neutrophils...µL.", "Lymphocytes...µL.", "Monocytes...µL.", "Thrombocytes..x1000.µL.", "hsCRP..mg.L."))
 
 df_test <- df_infection[, c("Sample_ID", "group", "Infection_group", "Neutrophils...µL.", "Lymphocytes...µL.", "Monocytes...µL.", "Thrombocytes..x1000.µL.", "hsCRP..mg.L.")] %>%
+  subset(.$group %in% c("infected", "control")) %>%
   melt(id.vars = c("Sample_ID", "group", "Infection_group")) %>%
   group_by(variable, Infection_group) %>%
-  kruskal_test(value ~ group, data = .) %>%
+  wilcox_test(value ~ group, data = ., paired = TRUE) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance(p.col = "p.adj", 
                    output.col = "p.adj_signif", 
@@ -674,8 +675,8 @@ df_test <- df_infection[, c("Sample_ID", "group", "Infection_group", "Neutrophil
                apply(max, na.rm = TRUE, MARGIN = 2) %>%
                '*' (0.85) %>%
                rep(each = 2)) %>%
-  add_column("group1" = 2,
-             "group2" = 3)
+  mutate("group1" = 1,
+         "group2" = 2)
 
 p_cell_counts <- ggplot(df_plot, aes(x = my_order)) +
   geom_boxplot(aes(x = my_order, y = value, group = group_plot, color = group_plot, fill = group_plot), 
@@ -700,7 +701,7 @@ p_cell_counts <- ggplot(df_plot, aes(x = my_order)) +
 
 
 
-### Code for GO dot plots as in Figure 5f and Extended Data Fig. 8g ----------------------------------
+### Code for GO dot plots as in Figure 5f and Extended Data Fig. 8h ----------------------------------
 
 direction <- c("palevioletred1", "skyblue4", "tan4", "lavenderblush1", "brown2", "firebrick4", "lightsteelblue1")
 GO_tables <- list()
@@ -746,7 +747,7 @@ p_GO <- ggplot(df_plot, mapping = aes(x = Module_name, y = Term, size = Ratio, c
         legend.position = "right")
 
 
-#GO dotplot as in Extended Data Fig. 7g
+#GO dotplot as in Extended Data Fig. 8h
 GO_tables_figure_E7g <- GO_tables[c("brown2", "firebrick4", "palevioletred1", "lavenderblush1")]
 
 score_name <- "Fisher.elim"

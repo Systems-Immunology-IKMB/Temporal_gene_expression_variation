@@ -246,58 +246,7 @@ chisq.test(icc_specificity$Group, icc_specificity$is_marker)
 
 
 
-
-
-# Code for dotplot as in Extended Data Fig. 4a ---------------
-
-#select genes identified as cell type markers and with high ICC
-my_features <- c("ITGA2B", "TUBB1", "IGHA2", "IGHG4", "CD72", "FCRLA", "CD19", "BLK", "CLEC4C", "LILRA4", "ZNF683", "CXCR6", "NELL2", "CCR4", "TCF19", "CD160", "NCR1", "LCN2", "MMP8", "IL5RA", "C1QA", "CES1")
-
-dot_plot_marker_genes <- DotPlot(Object_V1, features = my_features,  dot.scale = 4)  + 
-  RotatedAxis() +
-  scale_color_gradientn(colours  = rev(brewer.pal(n = 9, name = "RdBu")), rescaler = ~ scales::rescale_mid(.x, mid = 0)) +
-  guides(color = guide_colourbar(title.position = "top", title = "Average\nexpression"),
-         size = guide_legend(title.position = "top", ncol = 1, title = "Percent\nexpressed")) +
-  theme_bw() +
-  theme(axis.title = element_blank(),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.margin = unit(c(0, 0, 0, 0), "cm"),
-        legend.position = "right",
-        panel.grid = element_blank()) +
-  coord_flip()
-
-df_boxplots <- df_marker %>%
-  merge(icc_results, by = "Gene_ID") %>%
-  subset(.$Symbol %in% my_features) %>%
-  .[match(my_features, .$Symbol), ] %>%
-  .[, c("Symbol", "ICC", "cell_type_specificity")] %>%
-  melt()
-df_boxplots$Symbol <- factor(df_boxplots$Symbol, levels = my_features)
-
-boxplot_combined <- ggplot(df_boxplots, aes(x = Symbol, y = value)) +
-  geom_bar(aes(fill = variable), stat = "identity", position = "dodge", color = "black", width = 0.7) +
-  labs(y = "ICC") +
-  scale_fill_manual(values = c("ICC" = '#009900', "cell_type_specificity" = "#044B1D"), labels = c("ICC", "Cell type\nspecificity")) +
-  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) +
-  guides(fill = guide_legend(ncol = 1)) +
-  theme_bw() +
-  theme(panel.grid = element_blank(),
-        axis.title = element_blank(),
-        plot.margin = unit(c(0, 0, 0, 0), "cm"),
-        legend.position = "right",
-        axis.text.y = element_blank(),
-        legend.title = element_blank(),
-        axis.ticks.y = element_blank()) +
-  coord_flip()
-
-dot_plot_marker_genes + boxplot_combined + plot_layout(ncol = 2, widths = c(0.8, 0.2))
-
-
-
-
-
-
-# Code for correlation scatter plots as in Extended Data Fig. 4b ---------------
+# Code for correlation scatter plots as in Extended Data Fig. 4a ---------------
 
 my_colors <- c("CD4+ T cells" = "#EA811F",
                "CD8+ T cells" = "maroon",
@@ -359,6 +308,57 @@ cor_plot <- ggplot(effect_table, aes(x = cell_type_specificity, y = ICC)) +
         strip.background = element_rect(color = "white", fill = "white"),
         panel.border = element_rect(color = "black"),
         panel.grid = element_blank())
+
+
+
+
+
+
+
+# Code for dotplot as in Extended Data Fig. 4b ---------------
+
+#select genes identified as cell type markers and with high ICC
+my_features <- c("ITGA2B", "TUBB1", "IGHA2", "IGHG4", "CD72", "FCRLA", "CD19", "BLK", "CLEC4C", "LILRA4", "ZNF683", "CXCR6", "NELL2", "CCR4", "TCF19", "CD160", "NCR1", "LCN2", "MMP8", "IL5RA", "C1QA", "CES1")
+
+dot_plot_marker_genes <- DotPlot(Object_V1, features = my_features,  dot.scale = 4)  + 
+  RotatedAxis() +
+  scale_color_gradientn(colours  = rev(brewer.pal(n = 9, name = "RdBu")), rescaler = ~ scales::rescale_mid(.x, mid = 0)) +
+  guides(color = guide_colourbar(title.position = "top", title = "Average\nexpression"),
+         size = guide_legend(title.position = "top", ncol = 1, title = "Percent\nexpressed")) +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        legend.position = "right",
+        panel.grid = element_blank()) +
+  coord_flip()
+
+df_boxplots <- df_marker %>%
+  merge(icc_results, by = "Gene_ID") %>%
+  subset(.$Symbol %in% my_features) %>%
+  .[match(my_features, .$Symbol), ] %>%
+  .[, c("Symbol", "ICC", "cell_type_specificity")] %>%
+  melt()
+df_boxplots$Symbol <- factor(df_boxplots$Symbol, levels = my_features)
+
+boxplot_combined <- ggplot(df_boxplots, aes(x = Symbol, y = value)) +
+  geom_bar(aes(fill = variable), stat = "identity", position = "dodge", color = "black", width = 0.7) +
+  labs(y = "ICC") +
+  scale_fill_manual(values = c("ICC" = '#009900', "cell_type_specificity" = "#044B1D"), labels = c("ICC", "Cell type\nspecificity")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) +
+  guides(fill = guide_legend(ncol = 1)) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        legend.position = "right",
+        axis.text.y = element_blank(),
+        legend.title = element_blank(),
+        axis.ticks.y = element_blank()) +
+  coord_flip()
+
+dot_plot_marker_genes + boxplot_combined + plot_layout(ncol = 2, widths = c(0.8, 0.2))
+
 
 
 

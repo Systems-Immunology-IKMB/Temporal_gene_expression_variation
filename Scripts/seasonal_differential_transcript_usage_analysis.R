@@ -178,7 +178,7 @@ for(i in 1:length(my_groups)){
 
 
 
-## Code for plots as in Figure 4 and Extended Data Fig. 2d ---------------------------
+## Code for plots as in Figure 4 and Extended Data Fig. 7 ---------------------------
 
 #get significant genes (DTU)
 DTU_all <- read_tsv(paste0("results/DTU/output/LMM_Maaslin2_DTU_analysis_all/all_results.tsv")) 

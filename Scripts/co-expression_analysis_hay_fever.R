@@ -280,7 +280,7 @@ table(df_plot$group, df_plot$Annual_season)
 
 
 
-### Code for heatmap of module genes as in Extended Data Fig. 8d ------------------------------
+### Code for heatmap of module genes as in Extended Data Fig. 8e ------------------------------
 
 normalized_counts <- DESeqDataSetFromMatrix(countData = count_data, colData = col_clinical_data, design = ~ 1) %>%
   estimateSizeFactors() %>%

@@ -58,7 +58,7 @@ chisq.test(icc_heritability$Group, icc_heritability$Heritable)
 
 
 
-## Heritability violin plot as in Extended Data Fig. 4d ----------
+## Heritability violin plot as in Extended Data Fig. 5g ----------
 
 Heritability_wt <- icc_heritability %>%
   wilcox_test(h2 ~ Group, data = . , paired = FALSE) %>%

@@ -61,7 +61,7 @@ write.table(varMean, "results/Variance_partition/output/variance_partition_mean.
 
 
 
-## Violinplot of variance partition as in Fig. 1c ---------
+## Violinplot of variance partition as in Fig. 1e ---------
 
 #load labeller and set colors
 column_labels <- read.csv("results/Column_labels.csv", row.names = 1)
@@ -147,7 +147,7 @@ varMean_plot <- ggplot(varMean2[varMean2$Parameter != "Residuals", ], aes(x=reor
 
 
 
-## Barplot of variance partition for top 10 cell type-specific genes as in Fig. 1d -------------------------
+## Barplot of variance partition for top 10 cell type-specific genes as in Fig. 1f -------------------------
 
 #load data
 varPart <- read.table("results/Variance_partition/output/variance_partition.txt", sep = "\t") 
@@ -244,7 +244,7 @@ draw(text_neutrophils + ht_neutrophils + bar_neutrophils)
 
 
 
-## Barplot of variance partition for top 20 individual-specific genes as in Fig. 1e -------------------------
+## Barplot of variance partition for top 20 individual-specific genes as in Fig. 1g -------------------------
 
 #load data
 varPart <- read.table("results/Variance_partition/output/variance_partition.txt", sep = "\t") 

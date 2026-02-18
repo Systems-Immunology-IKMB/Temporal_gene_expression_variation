@@ -8,6 +8,7 @@ library(dplyr)
 library(ICC)
 library(rstatix)
 library(ggpubr)
+library(lme4)
 
 setwd("C:/Users/n.mishra/Temporal_gene_expression_variation")
 
@@ -64,15 +65,106 @@ gene_icc_data <- left_join(gene_icc_data, gene_attributes, by = "Gene_ID")
 
 write.table(gene_icc_data, "results/ICC_analysis/output/gene_icc_data_whole_dataset.txt", sep = '\t', row.names = FALSE, quote = FALSE)
 
+## Compute intraclass correlation coefficient (ICC) for each gene after correcting for cell type composition------------------------
 
+cibersort_df <- read.csv("results/CibersortX/LeuvenSamples25Counts5_LM22/CIBERSORTx_Job3_Adjusted.txt", sep = '\t')
+
+non_cell_cols <- c("Mixture", "P.value", "P-value", "Correlation", 
+                   "RMSE", "Absolute.score..sig.score.")
+
+celltype_mat <- cibersort_df[, !(colnames(cibersort_df) %in% non_cell_cols)]
+rownames(celltype_mat) <- as.character(cibersort_df$Mixture)
+celltype_mat <- as.matrix(celltype_mat)
+
+# Add tiny pseudocount for zeros
+mat_pseudo <- celltype_mat + 1e-6
+
+# Log-transform
+log_mat <- log(mat_pseudo)
+
+# CLR transform: subtract row means
+cell_clr <- log_mat - rowMeans(log_mat)
+
+pca_cells <- prcomp(cell_clr, center = TRUE, scale. = TRUE)
+
+summary(pca_cells)  
+
+cell_PCs <- as.data.frame(pca_cells$x[, 1:5])
+colnames(cell_PCs) <- paste0("cell_PC", 1:5)
+cell_PCs$Sample_ID <- rownames(celltype_mat)
+
+col_data_with_cell_pcs <- merge(col_data, cell_PCs, by = "Sample_ID")
+
+pcs <- paste0("cell_PC", 1:5)
+subject_col <- "Individual_ID"
+fixed_str <- paste(pcs, collapse = " + ")
+model_formula <- as.formula(paste("expr ~", fixed_str, "+ (1 |", subject_col, ")"))
+
+genes <- rownames(quantvst)
+icc_adj      <- rep(NA_real_, length(genes))
+var_between  <- rep(NA_real_, length(genes))
+var_within   <- rep(NA_real_, length(genes))
+
+names(icc_adj)     <- genes
+names(var_between) <- genes
+names(var_within)  <- genes
+
+for (i in seq_along(genes)) {
+  
+  gene <- genes[i]
+  expr_vec <- as.numeric(quantvst[gene, ])
+  
+  # Build expr_df_for_gene (long format)
+  expr_df_for_gene <- data.frame(
+    expr = expr_vec,
+    col_data_with_cell_pcs,
+    row.names = NULL
+  )
+  
+  # Fit mixed model
+  fit <- try(lmer(model_formula, data = expr_df_for_gene, REML = TRUE),
+             silent = TRUE)
+  if (inherits(fit, "try-error")) next
+  
+  # Extract variance components
+  vc <- VarCorr(fit)
+  if (!(subject_col %in% names(vc))) next
+  
+  vb <- as.numeric(vc[[subject_col]])       # between-subject variance
+  vw <- attr(vc, "sc")^2                    # within-subject (residual) variance
+  
+  var_between[i] <- vb
+  var_within[i]  <- vw
+  
+  # ICC = between / (between + within)
+  icc_adj[i] <- vb / (vb + vw)
+}
+
+icc_results <- data.frame(
+  Gene_ID      = genes,
+  var_between  = var_between,
+  var_within   = var_within,
+  ICC_adjusted = icc_adj,
+  row.names = NULL
+)
+
+celltype_aware_gene_icc_data <- left_join(icc_results, gene_attributes, by = "Gene_ID")
+
+write.table(celltype_aware_gene_icc_data, "results/ICC_analysis/output/cell_type_aware_gene_icc_data_filter5_25_whole_dataset.txt", sep = '\t', row.names = FALSE, quote = FALSE)
 
 
 
 ## Boxplots for inter- and intra-individual variance in gene expression as in Fig. 2a ---------
 
 gene_icc_data <- read.csv("results/ICC_analysis/output/gene_icc_data_whole_dataset.txt", sep = '\t')
-gene_icc_data$Category <- ifelse(gene_icc_data$gene_type == "protein_coding", "Protein coding", "Non protein coding")
-gene_icc_data$Group <- ifelse(gene_icc_data$ICC < 0.5, "Within", "Between")
+gene_icc_data <- gene_icc_data %>%
+  mutate(
+    Category = if_else(gene_type == "protein_coding", 
+                       "Protein coding", 
+                       "Non protein coding"),
+    Group    = if_else(ICC < 0.5, "Within", "Between"),
+    Model    = "unadj"
+  )
 
 plot_data <- melt(gene_icc_data[, c("gene_name", "Var_within", "Var_between", "Category")], id.vars = c("gene_name", "Category"))
 
@@ -106,7 +198,7 @@ boxplots <- ggplot(plot_data) +
 
 
 
-## Dotplot for comparison of inter- and intra-individual variance as in Fig. 2b ---------
+## Dotplot for comparison of inter- and intra-individual variance as in Extended Data Fig. 3a ---------
 
 gene_icc_data_protein_coding <- subset(gene_icc_data, gene_icc_data$Category == "Protein coding")
 
@@ -146,29 +238,55 @@ dens2 <- ggplot(gene_icc_data_protein_coding, aes(x = Var_between, fill = Group)
 
 
 
-## Density ICC plot as in Fig. 2c -----------------------
+## Density ICC plot as in Fig. 2b -----------------------
 
-non_protein_coding_below_0.5 <- sum(gene_icc_data$Category == "Non protein coding" & gene_icc_data$ICC < 0.5) / sum(gene_icc_data$Category == "Non protein coding")
-non_protein_coding_above_0.5 <- sum(gene_icc_data$Category == "Non protein coding" & gene_icc_data$ICC > 0.5) / sum(gene_icc_data$Category == "Non protein coding")
-protein_coding_below_0.5 <- sum(gene_icc_data$Category == "Protein coding" & gene_icc_data$ICC < 0.5) / sum(gene_icc_data$Category == "Protein coding")
-protein_coding_above_0.5 <- sum(gene_icc_data$Category == "Protein coding" & gene_icc_data$ICC > 0.5) / sum(gene_icc_data$Category == "Protein coding")
+celltype_aware_gene_icc_data <- celltype_aware_gene_icc_data %>%
+  mutate(
+    Category = if_else(gene_type == "protein_coding", 
+                       "Protein coding", 
+                       "Non protein coding"),
+    Group    = if_else(ICC_adjusted < 0.5, "Within", "Between"),
+    Model    = "cell_type_adj"
+  )
+
+gene_icc_data_model <- rbind(gene_icc_data %>% dplyr::select(Gene_ID, gene_name, gene_type, ICC, Var_within, Var_between, Category, Group, Model), 
+                             celltype_aware_gene_icc_data %>% dplyr::rename(
+                               Var_between = var_between,
+                               Var_within  = var_within,
+                               ICC         = ICC_adjusted
+                             ) %>% dplyr::select(Gene_ID, gene_name, gene_type, ICC, Var_within, Var_between, Category, Group, Model))
+
+
+unadj_non_protein_coding_below_0.5 <- sum(gene_icc_data$Category == "Non protein coding" & gene_icc_data$ICC < 0.5) / sum(gene_icc_data$Category == "Non protein coding")
+unadj_non_protein_coding_above_0.5 <- sum(gene_icc_data$Category == "Non protein coding" & gene_icc_data$ICC > 0.5) / sum(gene_icc_data$Category == "Non protein coding")
+unadj_protein_coding_below_0.5 <- sum(gene_icc_data$Category == "Protein coding" & gene_icc_data$ICC < 0.5) / sum(gene_icc_data$Category == "Protein coding")
+unadj_protein_coding_above_0.5 <- sum(gene_icc_data$Category == "Protein coding" & gene_icc_data$ICC > 0.5) / sum(gene_icc_data$Category == "Protein coding")
+
+cell_type_adj_non_protein_coding_below_0.5 <- sum(celltype_aware_gene_icc_data$Category == "Non protein coding" & celltype_aware_gene_icc_data$ICC < 0.5) / sum(celltype_aware_gene_icc_data$Category == "Non protein coding")
+cell_type_adj_non_protein_coding_above_0.5 <- sum(celltype_aware_gene_icc_data$Category == "Non protein coding" & celltype_aware_gene_icc_data$ICC > 0.5) / sum(celltype_aware_gene_icc_data$Category == "Non protein coding")
+cell_type_adj_protein_coding_below_0.5 <- sum(celltype_aware_gene_icc_data$Category == "Protein coding" & celltype_aware_gene_icc_data$ICC < 0.5) / sum(celltype_aware_gene_icc_data$Category == "Protein coding")
+cell_type_adj_protein_coding_above_0.5 <- sum(celltype_aware_gene_icc_data$Category == "Protein coding" & celltype_aware_gene_icc_data$ICC > 0.5) / sum(celltype_aware_gene_icc_data$Category == "Protein coding")
 
 
 labels <- data.frame(
-  Category = c("Non protein coding", "Non protein coding", "Protein coding", "Protein coding"),
-  ICC_threshold = c("ICC < 0.5", "ICC > 0.5", "ICC < 0.5", "ICC > 0.5"),
-  Percentage = c(non_protein_coding_below_0.5, non_protein_coding_above_0.5, protein_coding_below_0.5, protein_coding_above_0.5),
-  x = c(0.05, 0.75, 0.05, 0.75),
-  y = c(2, 2, 3, 3)
+  Model = c(rep("unadj", 4), rep("cell_type_adj", 4)), 
+  Category = rep(c("Non protein coding", "Non protein coding", "Protein coding", "Protein coding"), 2),
+  ICC_threshold = rep(c("ICC < 0.5", "ICC > 0.5", "ICC < 0.5", "ICC > 0.5"), 2),
+  Percentage = c(unadj_non_protein_coding_below_0.5, unadj_non_protein_coding_above_0.5, unadj_protein_coding_below_0.5, unadj_protein_coding_above_0.5, 
+                 cell_type_adj_non_protein_coding_below_0.5, cell_type_adj_non_protein_coding_above_0.5, cell_type_adj_protein_coding_below_0.5, cell_type_adj_protein_coding_above_0.5),
+  x = rep(c(0.05, 0.75, 0.05, 0.75), 2),
+  y = c(2, 2, 2.8, 2.8, 2.2, 2.2, 3, 3)
 )
 
-icc_density_plot <- ggplot(gene_icc_data, aes(x=ICC, col = Category)) + 
+
+icc_density_plot <- ggplot(gene_icc_data_model, aes(x=ICC, col = Model, linetype = Category)) + 
   geom_density(adjust = 1.2) + 
-  geom_vline(xintercept = 0.5) +
   ylab("Density (genes)") + 
-  scale_color_manual(values = c("#009999", "#FF6666"), name="") + 
-  geom_text(data = labels, aes(x = x, y = y, label = scales::percent(Percentage), col = Category), 
-            size = 1.7, hjust = 0, show.legend = FALSE) + 
+  geom_vline(xintercept = 0.5) + 
+  scale_color_manual(values = c("unadj"="#1F78B4", "cell_type_adj"="#E69F00"), name="Model", labels = c("unadj"="Unadjusted", "cell_type_adj"="Cell-type adjusted")) + 
+  geom_text(data = labels, aes(x = x, y = y, label = scales::percent(Percentage)), 
+            size = my_axis_text_size/.pt, hjust = 0) + 
+  scale_linetype_manual(values = c("Non protein coding\n(polyA+)" = "dashed", "Protein coding" = "solid")) + 
   xlim(c(0, 1)) +
   theme_bw() + 
   theme(strip.background = element_blank(), 
@@ -202,9 +320,66 @@ ridgeplot <- ggplot(ridgeplot_data, aes(x = ICC, y = Term, fill = p)) +
         legend.direction = "horizontal")
 
 
+## Boxplots for inter- and intra-individual variance in gene expression using the two models as in Fig. 2d ---------
+
+plot_data <- gene_icc_data_model %>%
+  dplyr::select(gene_name, Category, Model, Var_within, Var_between) %>%
+  pivot_longer(
+    cols      = c(Var_within, Var_between),
+    names_to  = "variable",
+    values_to = "value"
+  ) %>%
+  mutate(
+    Category = as.factor(Category),
+    variable = as.factor(variable),
+    Model    = factor(Model, levels = c("unadj", "cell_type_adj"))
+  )
+
+wilcox_test <- plot_data %>%
+  group_by(Category, variable) %>%
+  wilcox_test(value ~ Model, data = . , paired = TRUE) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance(p.col = "p.adj", 
+                   output.col = "p.adj_signif", 
+                   cutpoints = c(0, 0.0001, 0.01, 0.05, 1),
+                   symbols = c("***", "**", "*", "ns")) %>%
+  add_column("max" = 0.16)
+
+plot_data$variable <- factor(plot_data$variable, levels = c("Var_within", "Var_between"))
+
+boxplot_cell <- ggplot(plot_data) +
+  geom_boxplot(mapping = aes(x = Model, y = value, fill = Model)) +
+  facet_grid(
+    Category ~ variable,
+    scales = "free",
+    labeller = labeller(
+      variable = c(
+        "Var_within"  = "Within\nindividuals",
+        "Var_between" = "Between\nindividuals"
+      )
+    )
+  ) +
+  xlab("") + ylab("Variance") +
+  scale_fill_manual(
+    values = c("unadj"="#1F78B4", "cell_type_adj"="#E69F00"),
+    name   = "Model", 
+    labels = c("unadj"="Unadjusted", "cell_type_adj"="Cell-type adjusted")
+  ) +
+  stat_pvalue_manual(data = wilcox_test, y.position = "max", label = "p.adj_signif", tip.length = 0, bracket.shorten = 0.5) + 
+  coord_cartesian(ylim = quantile(plot_data$value, c(0.1, 0.9))) +
+  theme_bw() +
+  theme(strip.background = element_blank(), 
+        panel.grid = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank())
 
 
-## Boxplots for inter- and intra-individual variance comparison by expression level as in Extended Data Fig. 3a ------------------
+## Boxplots for inter- and intra-individual variance comparison by expression level as in Extended Data Fig. 3b ------------------
 
 gene_icc_data <- read.csv("results/ICC_analysis/output/gene_icc_data_whole_dataset.txt", sep = '\t')
 gene_icc_data$Category <- ifelse(gene_icc_data$gene_type == "protein_coding", "Protein coding", "Non protein coding")
@@ -257,7 +432,7 @@ var_by_expr_plot <- ggplot(plot_data) +
 
 
 
-## Plot ICC for cell type proportions as in Extended Data Fig. 3b ----------------------
+## Plot ICC for cell type proportions as in Extended Data Fig. 3c ----------------------
 
 #compute ICC for cell type proportions
 df_icc_cell_types <- col_clinical_data[, c("Individual_ID", "Sample_ID", "Neutrophils...µL.", "Lymphocytes...µL.", "Monocytes...µL.", "Eosinophils...µL.", "Thrombocytes..x1000.µL.")] %>%
@@ -383,7 +558,7 @@ write.table(gene_icc_data_healthy, "results/ICC_analysis/output/gene_icc_data_he
 
 
 
-## Scatterplot for ICC comparisons between sub-cohorts as in Extended Data Fig. 3c -----------------------
+## Scatterplot for ICC comparisons between sub-cohorts as in Extended Data Fig. 3d,e -----------------------
 
 #load data
 gene_icc_data2 <- read.csv("results/ICC_analysis/output/gene_icc_data_healthy.txt", sep = '\t')

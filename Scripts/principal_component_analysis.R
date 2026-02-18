@@ -3,12 +3,12 @@
 
 library(tidyverse)
 library(reshape2)
-library(stringr)
 library(dplyr)
 library(DESeq2)
+library(mixOmics)
 library(variancePartition)
 
-setwd("C:/Users/n.mishra/Temporal_gene_expression_variation")
+setwd("C:/Users/f.kimmig/Temporal_gene_expression_variation")
 
 
 ## Loading data ------------------------------------------------------------
@@ -33,20 +33,53 @@ count_data <- count_data[as.character(gene_list$Gene_ID), as.character(col_clini
 
 
 
+## Run PCA - multilevel approach ----------------------
 
-## Run PCA ----------------------
-
-pca <- DESeqDataSetFromMatrix(countData = count_data, colData = col_clinical_data, design = ~ 1) %>%
+vst_counts <- DESeqDataSetFromMatrix(countData = count_data, colData = col_clinical_data, design = ~ 1) %>%
   estimateSizeFactors() %>%
   vst() %>%
   assay() %>%
   t() %>%
+  as.data.frame()
+
+
+#within individuals
+design <- data.frame(sample = col_clinical_data$Individual_ID)
+vst_counts_within <- withinVariation(vst_counts, design)
+
+pca <- vst_counts_within %>%
   prcomp()
 
 all(col_clinical_data$Sample_ID == rownames(pca$x))
-pc_df <- cbind(col_clinical_data, pca$x)
+pc_df_within <- cbind(col_clinical_data, pca$x)
 
-pc_variance <- summary(pca) %>%
+pc_variance_within <- summary(pca) %>%
+  .$importance %>%
+  .["Proportion of Variance", ] %>% 
+  `*`(100) %>%
+  round(2) %>%
+  sprintf(fmt = '%.2f')
+
+
+#between individuals
+vst_counts_between <- vst_counts - vst_counts_within
+
+#subset to only one sample per individual (values are identical)
+set.seed(123)
+col_clinical_data_between <- col_clinical_data %>%
+  group_by(Individual_ID) %>%
+  sample_n(1) %>%
+  ungroup()
+
+vst_counts_between <- vst_counts_between[col_clinical_data_between$Sample_ID, ]
+
+pca <- vst_counts_between %>%
+  prcomp()
+
+all(col_clinical_data_between$Sample_ID == rownames(pca$x))
+pc_df_between <- cbind(col_clinical_data_between, pca$x)
+
+pc_variance_between <- summary(pca) %>%
   .$importance %>%
   .["Proportion of Variance", ] %>% 
   `*`(100) %>%
@@ -56,26 +89,27 @@ pc_variance <- summary(pca) %>%
 
 
 
-## Plot correlation between variables and PCs as in Fig. 1a ---------
+## Plot correlation between variables and between-individual PCs as in Fig. 1a ---------
 
-#compute canonical correlation between variables and the first 6 PCs
-form <- ~ Individual_ID + Sequencing_Run + Cohort + Annual_season + Time_of_sampling + Age + Sex + BMI + PC1 + PC2 + PC3 + PC4 + PC5 + PC6
+#compute canonical correlation between variables and the first 6 BPCs
+form <- ~ Individual_ID + Neutrophils...µL. + Lymphocytes...µL. + Monocytes...µL. + Eosinophils...µL. + Annual_season + Time_of_sampling + Vaccine_last_month + allergies_season + Age..years. + Gender + BMI..kg.m2. + Run + Season + PC1 + PC2 + PC3 + PC4 + PC5 + PC6
 
-Corr_mat <- canCorPairs(form, pc_df) %>%
-  .[paste0(rep("PC", 6), 1:6), c("Individual_ID", "Sequencing_Run", "Cohort", "Annual_season", "Time_of_sampling", "Age", "Sex", "BMI")]
-colnames(Corr_mat) <- c("Individual", "Sequencing run", "Cohort", "Annual season", "Time of sampling", "Age", "Sex", "BMI")
+Corr_mat_between <- canCorPairs(form, pc_df_between) %>%
+  .[paste0(rep("PC", 6), 1:6), c("Individual_ID", "Neutrophils...µL.", "Lymphocytes...µL.", "Monocytes...µL.", "Eosinophils...µL.", "Annual_season", "Time_of_sampling", "Vaccine_last_month", "allergies_season", "Age..years.", "Gender", "BMI..kg.m2.", "Run", "Season")]
+colnames(Corr_mat_between) <- c("Individual", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Annual season", "Time of sampling", "Vaccination", "Seasonal allergies", "Age", "Sex", "BMI", "Sequencing Run", "Cohort")
 
-Corr_mat <- Corr_mat %>%
+Corr_mat_between <- Corr_mat_between %>%
   as.data.frame() %>%
   add_column("Components" = rownames(.)) %>%
   melt(id.vars = "Components") %>%
-  add_column("value_rounded" = round(.$value, digits = 2))
+  add_column("value_rounded" = round(.$value, digits = 2)) %>%
+  subset(!.$variable %in% c("Vaccination", "Seasonal allergies"))
 
-Corr_mat$Components <- factor(Corr_mat$Components, levels = paste0(rep("PC", 6), 1:6) %>% rev())
-Corr_mat$variable <- factor(Corr_mat$variable, levels = c("Individual", "Sequencing run", "Cohort", "Annual season", "Time of sampling", "Age", "Sex", "BMI"))
+Corr_mat_between$Components <- factor(Corr_mat_between$Components, levels = paste0(rep("PC", 6), 1:6) %>% rev())
+Corr_mat_between$variable <- factor(Corr_mat_between$variable, levels = c("Individual", "Sex", "Age", "BMI", "Sequencing Run", "Cohort", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Annual season", "Time of sampling"))
 
 #add grid lines
-Corr_mat <- Corr_mat %>%
+Corr_mat_between <- Corr_mat_between %>%
   mutate(line_positions_y = as.numeric(factor(Components, levels = unique(Components))), 
          line_positions_y= line_positions_y + .5,  
          line_positions_y = ifelse(line_positions_y == max(line_positions_y), NA, line_positions_y)) %>%
@@ -83,141 +117,191 @@ Corr_mat <- Corr_mat %>%
          line_positions_x= line_positions_x + .5,  
          line_positions_x = ifelse(line_positions_x == max(line_positions_x), NA, line_positions_x)) 
 
-Corr_plot <- ggplot(Corr_mat, aes(x = variable, y = Components)) +
-  geom_point(aes(color = value, fill = value, size = value), shape = 21) +
+Corr_plot_between <- ggplot(Corr_mat_between, aes(x = variable, y = Components)) +
+  geom_point(aes(color = value, fill = value, size = value_rounded), shape = 21) +
   geom_text(aes(label = value_rounded), color = "black") +
   geom_vline(aes(xintercept = line_positions_x)) + 
   geom_hline(aes(yintercept = line_positions_y)) + 
   scale_y_discrete(position = "left", 
-                   breaks = paste0(rep("PC", 6), 1:6)) + 
-  scale_x_discrete(position = "bottom") +
-  scale_size(range = c(1, 5), guide = "none") +
+                   labels = paste0("B", names(pc_variance_between[1:6]), "\n(", pc_variance_between[1:6], rep("%)", 6)), 
+                   breaks = paste0(rep("PC", 6), 1:6), 
+                   expand = c(0, 0.5)) + 
+  scale_x_discrete(position = "bottom", expand = c(0, 0.5)) +
+  scale_size(range = c(1, 6), guide = "none", limits = c(0, 1)) +
   scale_fill_gradient(low = "#F7FBFF", high = "#053061", limits = c(0, 1)) +
   scale_color_gradient(low = "#F7FBFF", high = "#053061", limits = c(0, 1)) +
-  labs(fill = "Canonical\ncorrelation", color = "Canonical\ncorrelation", size = "Canonical\ncorrelation", x = NULL, y = NULL) +
+  labs(fill = "Canonical\ncorrelation", 
+       color = "Canonical\ncorrelation", 
+       size = "Canonical\ncorrelation", 
+       y = "Between-individual PCA", 
+       x = NULL) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 35, hjust = 1),
+  theme(axis.text.x = element_blank(),
         axis.ticks = element_blank(),
         plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
         panel.grid.major = element_blank()) +
   coord_fixed()
 
 
-#barplot for variance explained by first 6 PCs
-df_pc_variance <- summary(pc) %>%
-  .$importance %>%
-  .["Proportion of Variance", ] %>% 
-  `*`(100) 
-df_pc_variance <- data.frame("Components" = paste0(rep("PC", 6), 1:6), "Variance" = df_pc_variance[1:6]) 
-df_pc_variance$Components <- factor(df_pc_variance$Components, levels = paste0(rep("PC", 6), 1:6) %>% rev())
 
-variance_barplot <- ggplot(df_pc_variance, aes(x = Variance, y = Components)) +
-  geom_bar(stat = "identity", position = "dodge", color = "black", width = 0.7, fill = "#053061") + 
+
+
+## Plot correlation between variables and within-individual PCs as in Fig. 1b ---------
+
+#compute canonical correlation between variables and the first W6 PCs
+form <- ~ Individual_ID + Neutrophils...µL. + Lymphocytes...µL. + Monocytes...µL. + Eosinophils...µL. + Annual_season + Time_of_sampling + Vaccine_last_month + allergies_season + Age..years. + Gender + BMI..kg.m2. + Run + Season + PC1 + PC2 + PC3 + PC4 + PC5 + PC6
+
+Corr_mat_within <- canCorPairs(form, pc_df_within) %>%
+  .[paste0(rep("PC", 6), 1:6), c("Individual_ID", "Neutrophils...µL.", "Lymphocytes...µL.", "Monocytes...µL.", "Eosinophils...µL.", "Annual_season", "Time_of_sampling", "Vaccine_last_month", "allergies_season", "Age..years.", "Gender", "BMI..kg.m2.", "Run", "Season")]
+colnames(Corr_mat_within) <- c("Individual", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Annual season", "Time of sampling", "Vaccination", "Seasonal allergies", "Age", "Sex", "BMI", "Sequencing Run", "Cohort")
+
+Corr_mat_within <- Corr_mat_within %>%
+  as.data.frame() %>%
+  add_column("Components" = rownames(.)) %>%
+  melt(id.vars = "Components") %>%
+  add_column("value_rounded" = round(.$value, digits = 2)) %>%
+  subset(!.$variable %in% c("Vaccination", "Seasonal allergies"))
+
+Corr_mat_within$Components <- factor(Corr_mat_within$Components, levels = paste0(rep("PC", 6), 1:6) %>% rev())
+Corr_mat_within$variable <- factor(Corr_mat_within$variable, levels = c("Individual", "Sex", "Age", "BMI", "Sequencing Run", "Cohort", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Annual season", "Time of sampling")) 
+
+#add grid lines
+Corr_mat_within <- Corr_mat_within %>%
+  mutate(line_positions_y = as.numeric(factor(Components, levels = unique(Components))), 
+         line_positions_y= line_positions_y + .5,  
+         line_positions_y = ifelse(line_positions_y == max(line_positions_y), NA, line_positions_y)) %>%
+  mutate(line_positions_x = as.numeric(factor(variable, levels = unique(variable))), 
+         line_positions_x= line_positions_x + .5,  
+         line_positions_x = ifelse(line_positions_x == max(line_positions_x), NA, line_positions_x)) 
+
+Corr_plot_within <- ggplot(Corr_mat_within, aes(x = variable, y = Components)) +
+  geom_point(aes(color = value, fill = value, size = value_rounded), shape = 21) +
+  geom_text(aes(label = value_rounded), color = "black") +
+  geom_vline(aes(xintercept = line_positions_x)) + 
+  geom_hline(aes(yintercept = line_positions_y)) + 
   scale_y_discrete(position = "left", 
-                   breaks = paste0(rep("PC", 6), 1:6)) +
-  labs(x = "Variance (%)") +
-  scale_x_continuous(breaks = c(0, 15, 30), limits = c(0, 30)) +
+                   labels = paste0("W", names(pc_variance_within[1:6]), "\n(", pc_variance_within[1:6], rep("%)", 6)), 
+                   breaks = paste0(rep("PC", 6), 1:6), 
+                   expand = c(0, 0.5)) + 
+  scale_x_discrete(position = "bottom", 
+                   expand = c(0, 0.5)) +
+  scale_size(range = c(1, 6), guide = "none", limits = c(0, 1)) +
+  scale_fill_gradient(low = "#F7FBFF", high = "#053061", limits = c(0, 1)) +
+  scale_color_gradient(low = "#F7FBFF", high = "#053061", limits = c(0, 1)) +
+  labs(fill = "Canonical\ncorrelation", 
+       color = "Canonical\ncorrelation", 
+       size = "Canonical\ncorrelation", 
+       y = "Within-individual PCA", 
+       x = NULL) +
   theme_bw() +
-  theme(panel.grid = element_blank(),
-        axis.title.y = element_blank(),
-        axis.text.y = element_blank(),
-        axis.title.x = element_text(),
-        plot.margin = unit(c(0, 0, 0, 0), "cm"), 
-        legend.title = element_blank(),
-        axis.ticks.y = element_blank())
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.ticks = element_blank(),
+        plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        panel.grid.major = element_blank()) +
+  coord_fixed()
 
 
 
 
+## Plot BPCs colored by sex, sequencing run, age, and diurnal time of sampling as in Fig. 1c and Extended Data Fig. 2a ---------
 
-
-
-
-## Plot PCs colored by cohort, age,sequencing run and sex as in Fig. 1b ---------
-
-P1 <- ggplot(data = pc_df, mapping = aes(x=PC1, y=PC2, col=Cohort)) + 
-  geom_point(alpha = 0.6) + xlab("") + 
-  ylab(paste("PC2 (", pc_variance[2], "% variance)", sep = '')) 
-P1 <- P1 + scale_color_manual(values = c("#7D4B19", "#4B324b"))
-P1 <- P1 + stat_ellipse()
-P1 <- P1 + theme_bw() + 
-  theme(legend.position = "right",
-        axis.title.x = element_blank(),
-        panel.grid = element_blank())
-
-P2 <- ggplot(data = pc_df, mapping = aes(x=PC1, y=PC2, color=Sequencing_Run)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC1 (", pc_variance[1], "% variance)", sep = '')) + 
-  ylab(paste("PC2 (", pc_variance[2], "% variance)", sep = '')) 
-P2 <- P2 + scale_color_manual(values = c("#BF616A","#EBCB8B","#A3BE8C","#B48EAD"))
-P2 <- P2 + stat_ellipse()
-P2 <- P2 + labs(color = "Sequencing\nRun") +
+#Fig. 1c
+ggplot(data = pc_df_between, mapping = aes(x = PC1, y = PC4, color=Gender)) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("BPC1 (", pc_variance_between[1], "% variance)", sep = ''),
+       y = paste("BPC4 (", pc_variance_between[4], "% variance)", sep = ''),
+       color = "Sex") + 
+  scale_color_manual(values = c("Man" = "#9933FF", "Vrouw" = "#FF9933"), 
+                     labels = c("Man" = "Male", "Vrouw" = "Female")) +
+  scale_x_continuous(position = "top") +
+  stat_ellipse() +
   theme_bw() + 
   theme(legend.position = "right",
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        panel.grid = element_blank())
+
+#Extended Data Fig. 2a
+ggplot(data = pc_df_between, mapping = aes(x = PC1, y = PC6, color=as.character(Run))) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("BPC1 (", pc_variance_between[1], "% variance)", sep = ''),
+       y = paste("BPC6 (", pc_variance_between[6], "% variance)", sep = ''),
+       color = "Sequencing\nrun") + 
+  scale_color_manual(values = c("151" = "#BF616A","152" = "#EBCB8B","125" = "#A3BE8C","8" = "#B48EAD"),
+                     labels = c("151" = "Run 1", "152" = "Run 2", "125" = "Run 3", "8" = "Run 4"),
+                     breaks = c("151", "152", "125", "8")) +
+  scale_x_continuous(position = "bottom") +
+  stat_ellipse() +
+  theme_bw() + 
+  theme(legend.position = "right",
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        plot.margin = unit(c(0, 0, 0, 0.1), "cm"), 
         panel.grid = element_blank())
 
 
-P3 <- ggplot(data = pc_df, mapping = aes(x=PC3, y=PC4, color=Age)) + 
-  geom_point(alpha = 0.6) + xlab("") + 
-  ylab(paste("PC4 (", pc_variance[4], "% variance)", sep = '')) 
-P3 <- P3 + scale_color_gradient(low = "#99CCFF", high = "#0000CC")
-P3 <- P3 + theme_bw() + 
+ggplot(data = pc_df_between, mapping = aes(x = PC3, y = PC4, color=Age..years.)) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("BPC3 (", pc_variance_between[3], "% variance)", sep = ''),
+       y = paste("BPC4 (", pc_variance_between[4], "% variance)", sep = ''),
+       color = "Age") + 
+  scale_color_gradient(low = "#99CCFF", high = "#0000CC") +
+  scale_x_continuous(position = "bottom") +
+  theme_bw() + 
   theme(legend.position = "right",
-        axis.title.x = element_blank(),
-        panel.grid = element_blank())
-
-P4 <- ggplot(data = pc_df, mapping = aes(x=PC3, y=PC4, color=Sex)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC3 (", pc_variance[3], "% variance)", sep = '')) + 
-  ylab(paste("PC4 (", pc_variance[4], "% variance)", sep = '')) 
-P4 <- P4 + scale_color_manual(values = c("Male"="#9933FF", "Female"="#FF9933"))
-P4 <- P4 + stat_ellipse()
-P4 <- P4 + theme_bw() + 
-  theme(legend.position = "right",
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        plot.margin = unit(c(0, 0, 0, 0.1), "cm"), 
         panel.grid = element_blank())
 
 
-
-
-## Plot PCs colored by annual season, time of sampling and BMI as in Extended Data Fig. 2a ---------
-
-P1 <- ggplot(data = pc_df, mapping = aes(x=PC1, y=PC2, color=Annual_season, fill=Annual_season)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC1 (", pc_variance[1], "% variance)", sep = '')) + 
-  ylab(paste("PC2 (", pc_variance[2], "% variance)", sep = '')) 
-P1 <- P1 + stat_ellipse()
-P1 <- P1 + scale_color_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn"))
-P1 <- P1 + scale_fill_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn"))
-P1 <- P1 + labs(color = "Annual\nseason", fill = "Annual\nseason")
-P1 <- P1 + theme_bw() + 
+ggplot(data = pc_df_between, mapping = aes(x = PC4, y = PC5, color=Time_of_sampling)) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("BPC4 (", pc_variance_between[4], "% variance)", sep = ''),
+       y = paste("BPC5 (", pc_variance_between[5], "% variance)", sep = ''),
+       color = "Time of\nsampling") + 
+  scale_color_gradient(low = "#FDD0A2", high = "#7F2704") +
+  scale_x_continuous(position = "bottom") +
+  theme_bw() + 
   theme(legend.position = "right",
-        plot.margin = unit(c(0, 0.2, 0.2, 0), "cm"), 
-        panel.grid = element_blank())
-
-P2 <- ggplot(data = pc_df, mapping = aes(x=PC3, y=PC4, color=Annual_season, fill=Annual_season)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC3 (", pc_variance[3], "% variance)", sep = '')) + 
-  ylab(paste("PC4 (", pc_variance[4], "% variance)", sep = '')) 
-P2 <- P2 + stat_ellipse()
-P2 <- P2 + scale_color_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'))
-P2 <- P2 + theme_bw() + 
-  theme(legend.position = "right",
-        plot.margin = unit(c(0, 0, 0.2, 0), "cm"), 
-        panel.grid = element_blank())
-
-P3 <- ggplot(data = pc_df[!is.na(pc_df$Time_of_sampling), ], mapping = aes(x=PC3, y=PC4, color=Time_of_sampling)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC3 (", pc_variance[3], "% variance)", sep = '')) + 
-  ylab(paste("PC4 (", pc_variance[4], "% variance)", sep = '')) 
-P3 <- P3 + scale_color_gradient(low = "#FDD0A2", high = "#7F2704")
-P3 <- P3 + labs(color = "Time of\nsampling", fill = "Time of\nsampling")
-P3 <- P3 + theme_bw() + 
-  theme(legend.position = "right",
-        plot.margin = unit(c(0, 0.2, 0, 0), "cm"), 
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        plot.margin = unit(c(0, 0, 0, 0.1), "cm"), 
         panel.grid = element_blank())
 
 
-P4 <- ggplot(data = pc_df, mapping = aes(x=PC3, y=PC4, color=BMI)) + 
-  geom_point(alpha = 0.6) + xlab(paste("PC3 (", pc_variance[3], "% variance)", sep = '')) + 
-  ylab(paste("PC4 (", pc_variance[4], "% variance)", sep = '')) 
-P4 <- P4 + scale_color_gradient(low = "#C7E9C0", high = "#00441B")
-P4 <- P4 + theme_bw() + 
+
+
+## Plot WPCs colored by annual season as in Fig. 1d and Extended Data Fig. 2a ---------
+
+#Fig. 1d
+ggplot(data = pc_df_within, mapping = aes(x = PC1, y = PC2, color = Annual_season, fill = Annual_season)) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("WPC1 (", pc_variance_within[1], "% variance)", sep = ''),
+       y = paste("WPC2 (", pc_variance_within[2], "% variance)", sep = ''),
+       color = "Annual\nseason",
+       fill = "Annual\nseason") + 
+  scale_color_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn")) +
+  scale_fill_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn")) +
+  stat_ellipse() +
+  scale_x_continuous(position = "top") +
+  theme_bw() + 
   theme(legend.position = "right",
-        plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        panel.grid = element_blank())
+
+#Extended Data Fig. 2a
+ggplot(data = pc_df_within, mapping = aes(x = PC4, y = PC6, color = Annual_season, fill = Annual_season)) + 
+  geom_point(alpha = 0.6) + 
+  labs(x = paste("WPC4 (", pc_variance_within[4], "% variance)", sep = ''),
+       y = paste("WPC6 (", pc_variance_within[6], "% variance)", sep = ''),
+       color = "Annual\nseason",
+       fill = "Annual\nseason") + 
+  scale_color_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn")) +
+  scale_fill_manual(values = c("Winter" = '#3399FF', "Autumn" = '#FFB266', "Summer" = '#FF6666', "Spring" = '#FF99CC'), breaks = c("Winter", "Spring", "Summer", "Autumn")) +
+  stat_ellipse() +
+  scale_x_continuous(position = "bottom") +
+  theme_bw() + 
+  theme(legend.position = "right",
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = 'cm'),
+        plot.margin = unit(c(0, 0, 0, 0.1), "cm"), 
         panel.grid = element_blank())
 
